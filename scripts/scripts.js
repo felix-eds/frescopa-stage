@@ -3,6 +3,7 @@
 import { events } from '@dropins/tools/event-bus.js';
 import {
   buildBlock,
+  createOptimizedPicture,
   decorateBlocks,
   decorateButtons,
   decorateIcons,
@@ -174,12 +175,49 @@ async function applyTemplates(doc) {
   }
 }
 
+const IMAGE_HREF_RE = /\.(?:avif|webp|png|jpe?g|gif|svg)$/i;
+
+/**
+ * In AEM Authoring on Edge Delivery Services (Crosswalk/XWalk), image references that live on
+ * the "delivery tier" (e.g. Adobe Stock assets served through the AEM Assets Delivery API, or
+ * DAM paths that the pipeline didn't resolve into markup) are not turned into a <picture> by the
+ * authoring pipeline - they come through as a plain link to the asset. Turn any link that points
+ * directly at an image into a real <picture> element so blocks (and default content) can rely on
+ * always finding a <picture> wherever an author placed an image.
+ * @param {Element} main The container element
+ */
+export function decorateLinkedPictures(main) {
+  main.querySelectorAll('a').forEach((link) => {
+    const href = link.getAttribute('href');
+    if (!href) return;
+    const url = new URL(href, window.location.href);
+    if (!IMAGE_HREF_RE.test(url.pathname)) return;
+
+    const alt = link.textContent.trim();
+    let picture;
+    if (url.origin === window.location.origin) {
+      // same-origin assets can be routed through the site's own image optimizer
+      picture = createOptimizedPicture(url.pathname, alt);
+    } else {
+      // cross-origin (e.g. delivery tier) assets can't be resized by this site, use as-is
+      picture = document.createElement('picture');
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = alt;
+      img.src = href;
+      picture.append(img);
+    }
+    link.replaceWith(picture);
+  });
+}
+
 /**
  * Decorates the main element.
  * @param {Element} main The main element
  */
-// eslint-disable-next-line import/prefer-default-export
 export function decorateMain(main) {
+  decorateLinkedPictures(main);
+
   // hopefully forward compatible button decoration
   decorateButtons(main);
   decorateIcons(main);
